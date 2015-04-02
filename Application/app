@@ -1,0 +1,235 @@
+import os
+from Decompress import Decompress
+from TempFileManager import TempFileManager
+from AffymetrixUtilities import AffymetrixUtilities
+from BackgroundAnalysis import BackgroundAnalysis
+from Experiment import Experiment
+from SampleGroup import SampleGroup
+from Sample import Sample
+from SampleAttribute import SampleAttribute
+from CombineAffyArray import CombineAffyArray
+from ANOVA import ANOVA
+
+import pdb
+
+
+# import sys
+# import imp
+# dirRBPCM = r""
+#
+# for directory in sys.path:
+#     this_dir = os.path.basename(directory)
+#     if this_dir.split('_')[0] == 'RBP-Consensus-Motif':
+#         dirRBPCM = directory
+#
+# RBPCM_Libraries = dirRBPCM + r"/Libraries/"
+#
+# for subdir, dirs, files in os.walk(RBPCM_Libraries):
+#     for file in files:
+#         if os.path.splitext(file)[1][1:].upper() == 'PY':
+#             moduleName = os.path.splitext(file)[0]
+#             print "Importing module: " + moduleName
+#             imp.load_source(moduleName, os.path.join(subdir, file))
+#             print "Loading module: " + file
+
+
+class SpeciesDirectory(object):
+    path = ''
+    speciesName = ''
+
+# Laptop
+rbp_consensus_root = r"/Users/andrew/Google Drive/Nucleic Acid Research/SourceCode/RBP-Consensus-Motif_1.0.1/"
+# Desktop
+# rbp_consensus_root = r"/Volumes/Data/Andrew/Google Drive/Nucleic Acid Research/SourceCode/RBP-Consensus-Motif_1.0.1/"
+archivePath = os.path.join(rbp_consensus_root, "Libraries/DatabaseUtils/FlatDBs/3pUTR/")
+
+SpeciesDirs = []
+for dirName, subDirList, fileList in os.walk(archivePath):
+    for subDir in subDirList:
+        if str(subDir).upper() != "TEMP":
+            speciesDirectory = SpeciesDirectory()
+            speciesDirectory.path = dirName + subDir + '/'
+            speciesDirectory.speciesName = subDir
+            SpeciesDirs.append(speciesDirectory)
+
+x = 0
+for species in SpeciesDirs:
+    print "To obtain 3'UTR records from " + species.speciesName + " press " \
+          + str(x) + ". "
+    x += 1
+
+speciesSelector = int(input("Your choice? : "))
+decompressor = Decompress()
+tempFileManager = TempFileManager()
+affymetrixUtilities = AffymetrixUtilities(rbp_consensus_root)
+celAnalyzer = BackgroundAnalysis()
+
+x = 0
+SpeciesDBFiles = []
+for f in os.listdir(SpeciesDirs[speciesSelector].path):
+    if os.path.splitext(f)[1][1:].upper() == 'GZ':
+        SpeciesDBFiles.append(f)
+        print "To use " + f + " press " + str(x) + ". "
+        x += 1
+
+fileSelector = int(input("Your choice? : "))
+newPath = SpeciesDirs[speciesSelector].path + SpeciesDBFiles[fileSelector]
+tempPath = SpeciesDirs[speciesSelector].path + "Temp/" + SpeciesDBFiles[fileSelector].split('.')[0] + '.data'
+decompressor.gUnzip(newPath, tempPath)
+
+sample_data_path = input("Please give the path to the directory with your sample data. ")
+
+x = 0
+SampleFiles = []
+for f in os.listdir(sample_data_path):
+    SampleFiles.append(f)
+    print "To use " + f + " press " + str(x) + '. '
+    x += 1
+
+fileSelector = int(input("Your choice? : "))
+newPath = os.path.join(sample_data_path, SampleFiles[fileSelector])
+tempPath = os.path.join(rbp_consensus_root, "SampleData/Temp")
+decompressor.unTar(newPath, tempPath)
+expanded_path = os.path.join(tempPath, "Temp")
+
+# for f in os.listdir(expanded_path):
+#     if os.path.splitext(f)[1][1:].upper() == 'CEL':
+#         affyFile_path = os.path.join(expanded_path, f)
+#         affymetrixUtilities.convertCELtoText(affyFile_path)
+
+cel_map_path = affymetrixUtilities.createCELFileForConversionMapping(rbp_consensus_root)
+output_path = os.path.join(rbp_consensus_root, "Defaults/TextCel")
+affymetrixUtilities.convertCELUsingAFP(cel_map_path, output_path)
+sample_paths = celAnalyzer.analyzeCELFiles(rbp_consensus_root)
+
+experiments = []
+number_experiments = int(raw_input("How many unique experiments are in this data set? (Enter a valid integer value) "))
+for x in range(0, number_experiments):
+    experiment_name = raw_input("Enter a name for this experiment: ")
+    experiment = Experiment(experiment_name)
+    num_sampleGroups = int(raw_input("How many sample groups are in this experiment? (Enter a valid integer value) "))
+    for y in range(0, num_sampleGroups):
+        sample_group_name = raw_input("Enter a name for this sample group: ")
+        sampleGroup = SampleGroup(sample_group_name)
+        print("Choose the files to add to this sample group by adding a comma delimited integer string ")
+        z = 0
+        for path in sample_paths:
+            print path + " *** Enter: " + str(z) + " *** "
+            z += 1
+        selections = raw_input("Your selections for this group? ")
+        selectArray = selections.replace(' ', '').split(',')
+        for select in selectArray:
+            if len(select) > 0:
+                sample_name = raw_input("Enter a name for this sample: ")
+                thisPath = sample_paths[int(select)]
+                sample = Sample(sample_name, thisPath)
+                sampleGroup.addSampleToSampleGroup(sample)
+        experiment.addSampleGroupToExperiment(sampleGroup)
+    experiments.append(experiment)
+
+anova = ANOVA()
+# TESTING STAT CHANGE
+for experiment in experiments:
+    significant_genes = anova.oneWayANOVA_Experiment(experiment)
+
+    pdb.set_trace()
+# TESTING STAT CHANGE
+
+print "Time to recover some memory and drive space... "
+
+# This removes expanded database files
+for f in os.listdir(tempPath):
+    if os.path.isfile(f):
+        print "Removing file " + f + " from Temp directory "
+        os.remove(f)
+        print "Temporary file removed "
+    if os.path.isdir(f):
+        tempFileManager.removeDirectoryFiles(f)
+
+print "Resources have been successfully recovered. "
+print "Combining sample data into individual files. "
+combiner = CombineAffyArray(rbp_consensus_root)
+
+for experiment in experiments:
+    for sampleGroup in experiment.returnSampleGroups():
+        fArray = []
+
+        for sample in sampleGroup.returnAllSamples():
+            fArray.append(sample.getSampleGroupFilePath())
+
+        print "Combining raw data into tab delimited text file. "
+        combined_path = combiner.combineSampleGroupFiles(fArray, sampleGroup.returnSampleGroupName())
+        print "Averaging replicate values. "
+
+        print "File created, analyzing values. "
+        sampleGroup.setCombinedFilePath(combined_path)
+        average_path = combiner.averageDuplicates(combined_path, sampleGroup.returnSampleGroupName())
+        print "Calculating mean, variance and standard deviation for sample group. "
+        sampleGroup.setAverageIntensityPath(average_path)
+
+for experiment in experiments:
+    exp_dir = os.path.join(rbp_consensus_root, "Defaults/Experiments")
+    this_exp_dir = os.path.join(exp_dir, experiment.returnExperimentName())
+
+    if not os.path.exists(this_exp_dir):
+        os.mkdir(this_exp_dir)
+
+    this_exp_file = os.path.join(this_exp_dir, experiment.returnExperimentName() + '.dt')
+    intensity_paths = []
+
+    for sampleGroup in experiment.returnSampleGroups():
+        int_path = sampleGroup.returnAverageIntensityPath()
+        intensity_paths.append(int_path)
+
+    print "Combining sample groups into single table file. "
+    desc_table_path = combiner.createDataTableForExperiment(intensity_paths, this_exp_file)
+    sampleGroup.setDescCombinedPath(desc_table_path)
+    print "Files combined. "
+
+    quality_path = combiner.removePoorQuality(desc_table_path)
+    sampleGroup.setQualityIntensityPath(quality_path)
+    print "\n\n\n\n\n"
+    print "Mean intensities obtained, poor quality data removed. \n\n\n"
+    print "We are going to collect some metadata on each sample group now. \n\n\n"
+    print "Please enter attributes for your samples IE: cell type, treatment, etc... \n\n\n"
+    print "You will be asked to first enter the attribute name, then it's value. \n\n\n\n\n"
+
+for experiment in experiments:
+    sample_groups = experiment.returnSampleGroups()
+    sample_one = sample_groups[0]
+    input_attributes = True
+
+    print "Enter attributes for sample group: " + sample_one.returnSampleGroupName() + '\n'
+    while input_attributes:
+        sa = SampleAttribute()
+        sa.setAttributeName(raw_input("Enter the name for this attribute. "))
+        sa.setAttributeValue(raw_input("Enter the value for this attribute. "))
+        sample_one.addSampleAttributeToThis(sa)
+        input_attributes = bool(str(raw_input("Do you have more attributes to enter? (Y/N)\n")).upper() == "Y")
+
+    for x in range(1, len(sample_groups)):
+        sample = sample_groups[x]
+
+        print "Enter attributes for sample group: " + sample_groups[x].returnSampleGroupName() + '\n'
+        for sample_attribute in sample_one.returnSampleAttributes():
+            sa = SampleAttribute()
+            sa.setAttributeName(sample_attribute.getAttributeName())
+            sa.setAttributeValue(raw_input("Enter the value for this attribute: " +
+                sample_attribute.getAttributeName() + '. \n'))
+            sample.addSampleAttributeToThis(sa)
+
+phenotype_path = os.path.join(this_exp_dir, "phenotype.txt")
+attribute_array = []
+for experiment in experiments:
+    y = 0
+
+    for sample in experiment.returnSampleGroups():
+        attribute_array = sample.returnSampleAttributes()
+
+        if y == 0:
+            combiner.createPhenotypTableForR(attribute_array, phenotype_path, True, sample.returnSampleGroupName())
+        else:
+            combiner.createPhenotypTableForR(attribute_array, phenotype_path, False, sample.returnSampleGroupName())
+        y += 1
+
+pdb.set_trace()
